@@ -11,6 +11,8 @@ use League\Flysystem\Util;
 
 use AdammBalogh\Box\Command\Content;
 use AdammBalogh\Box\ContentClient;
+use AdammBalogh\Box\Request\ExtendedRequest;
+
 use AdammBalogh\Box\Factory\ResponseFactory;
 use AdammBalogh\Box\GuzzleHttp\Message\SuccessResponse;
 use League\Flysystem\Adapter\Polyfill\StreamedTrait;
@@ -222,8 +224,32 @@ class BoxAdapter extends AbstractAdapter
      *
      * @return bool
      */
-    public function deleteDir($dirname)
+    public function deleteDir($path)
     {
+        $path = $this->applyPathPrefix($path);
+
+        if ($id = $this->idForFolder($path)) {
+            try {
+                $er = new ExtendedRequest();
+                $er->addQueryField('recursive', 'true');
+                $command = new Content\Folder\DeleteFolder($id, $er);
+                $response = ResponseFactory::getResponse($this->client, $command);
+
+                if ($response instanceof SuccessResponse) {
+                    return true;
+                }
+            }
+            // on success, box returns a "204 No Conent" header, but that trips
+            // up guzzle which expects to have some JSON to parse.
+            catch (\GuzzleHttp\Exception\ParseException $pe) {
+                $a = explode("\n", $pe->getResponse());
+                if (strpos($a[0], "204 No Content")) {
+                    return true;
+                }
+
+                print_r(implode("\n", $a));
+            }
+        }
 
         return false;
     }
