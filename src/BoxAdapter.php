@@ -56,6 +56,7 @@ class BoxAdapter extends AbstractAdapter
      */
     public function write($path, $contents, Config $config)
     {
+        $path = $this->applyPathPrefix($path);
         if ($parentFolderId = $this->idForFolder(dirname($path))) {
             $command = new Content\File\UploadFile(basename($path), $parentFolderId, $contents);
             $response = ResponseFactory::getResponse($this->client, $command);
@@ -87,9 +88,10 @@ class BoxAdapter extends AbstractAdapter
      */
     public function update($path, $contents, Config $config)
     {
+        $path = $this->applyPathPrefix($path);
         if ($id = $this->idForFile($path)) {
             $command = new Content\File\UploadNewFileVersion($id, $contents);
-            $response = ResponseFactory::getResponse($contentClient, $command);
+            $response = ResponseFactory::getResponse($this->client, $command);
 
             if ($response instanceof SuccessResponse) {
                 $json = json_decode($response->getBody());
@@ -121,6 +123,8 @@ class BoxAdapter extends AbstractAdapter
      */
     public function rename($path, $newpath)
     {
+        $path = $this->applyPathPrefix($path);
+        $newpath = $this->applyPathPrefix($newpath);
         if ($oid = $this->idForFile($path)) {
             if ($newId = $this->idForFolder(dirname($newpath))) {
                 $er = new ExtendedRequest();
@@ -128,7 +132,7 @@ class BoxAdapter extends AbstractAdapter
                 $er->setPostBodyField('id', $newId);
 
                 $command = new Content\File\UpdateFileInfo($oid, $er);
-                $response = ResponseFactory::getResponse($contentClient, $command);
+                $response = ResponseFactory::getResponse($this->client, $command);
 
                 if ($response instanceof SuccessResponse) {
                     $json = json_decode($response->getBody());
@@ -154,10 +158,13 @@ class BoxAdapter extends AbstractAdapter
      */
     public function copy($path, $newpath)
     {
+        $path = $this->applyPathPrefix($path);
+        $newpath = $this->applyPathPrefix($newpath);
+
         if ($id = $this->idForPath($path)) {
             if ($newId = $this->idForPath(dirname($newpath))) {
                 $command = new Content\File\CopyFile($id, $newId);
-                $response = ResponseFactory::getResponse($contentClient, $command);
+                $response = ResponseFactory::getResponse($this->client, $command);
 
                 if ($response instanceof SuccessResponse) {
                     $json = json_decode($response->getBody());
@@ -183,13 +190,24 @@ class BoxAdapter extends AbstractAdapter
      */
     public function delete($path)
     {
-        if ($id = $this->idForPath()) {
-            $command = new Content\File\DeleteFile('fileId');
-            $response = ResponseFactory::getResponse($contentClient, $command);
+        $path = $this->applyPathPrefix($path);
 
-            if ($response instanceof SuccessResponse) {
-                $json = json_decode($response->getBody());
-                return ['is_deleted' => true];
+        if ($id = $this->idForFile($path)) {
+            try {
+                $command = new Content\File\DeleteFile($id);
+                $response = ResponseFactory::getResponse($this->client, $command);
+
+                if ($response instanceof SuccessResponse) {
+                    return true;
+                }
+            }
+            // on success, box returns a "204 No Conent" header, but that trips
+            // up guzzle which expects to have some JSON to parse.
+            catch (\GuzzleHttp\Exception\ParseException $pe) {
+                $a = explode("\n", $pe->getResponse());
+                if (strpos($a[0], "204 No Content")) {
+                    return true;
+                }
             }
         }
 
@@ -221,9 +239,11 @@ class BoxAdapter extends AbstractAdapter
      */
     public function createDir($dirname, Config $config)
     {
+        $dirname = $this->applyPathPrefix($dirname);
+
         if ($id = $this->idForPath($dirname)) {
             $command = new Content\Folder\CreateFolder('folderName', 'parentFolderId');
-            $response = ResponseFactory::getResponse($contentClient, $command);
+            $response = ResponseFactory::getResponse($this->client, $command);
 
             if ($response instanceof SuccessResponse) {
                 $json = json_decode($response->getBody());
@@ -256,9 +276,10 @@ class BoxAdapter extends AbstractAdapter
 
     public function read($path)
     {
+        $path = $this->applyPathPrefix($path);
         if ($id = $this->idForPath($path)) {
             $command = new Content\File\DownloadFile($id);
-            $response = ResponseFactory::getResponse($contentClient, $command);
+            $response = ResponseFactory::getResponse($this->client, $command);
 
             if ($response instanceof SuccessResponse) {
                 return $response->getBody();
@@ -276,6 +297,7 @@ class BoxAdapter extends AbstractAdapter
 
     public function listContents($path = '', $recursive = false)
     {
+        $path = $this->applyPathPrefix($path);
         if ($id = $this->idForPath($path)) {
             $command = new Content\Folder\ListFolder($id);
             $response = ResponseFactory::getResponse($this->client, $command);
@@ -303,6 +325,7 @@ class BoxAdapter extends AbstractAdapter
 
     public function getMetadata($path)
     {
+        $path = $this->applyPathPrefix($path);
         if ($id = $this->idForFile($path)) {
             $command = new Content\File\GetFileInfo($id);
             $response = ResponseFactory::getResponse($this->client, $command);
@@ -393,7 +416,7 @@ class BoxAdapter extends AbstractAdapter
             $path = '';
         }
 
-        $path = $this->applyPathPrefix($path);
+//        $path = $this->applyPathPrefix($path);
 
         if (isset($this->paths[$path]) && $this->paths[$path]['type'] === $type) {
             return $this->paths[$path]['id'];
