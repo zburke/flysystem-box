@@ -1,0 +1,33 @@
+{
+    "name": "zburke/flysystem-box",
+    "description": "Flysystem adapter for Box",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Zak Burke",
+            "email": "zak.burke@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=5.4.0",
+        "league/flysystem": "~1.0",
+        "adammbalogh/box-sdk": "@stable"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "~4.8"
+    },
+    "autoload": {
+        "psr-4": {
+            "Zburke\\Flysystem\\Box\\": "src/"
+        }
+    },
+    "config": {
+        "bin-dir": "bin"
+    },
+    "prefer-stable": true,
+    "extra": {
+        "branch-alias": {
+            "dev-master": "1.0-dev"
+        }
+    }
+}
