@@ -7,7 +7,7 @@ use League\Flysystem\Adapter\Polyfill\NotSupportingVisibilityTrait;
 use League\Flysystem\Config;
 use League\Flysystem\Util;
 
-
+use GuzzleHttp\Client;
 
 use AdammBalogh\Box\Command\Content;
 use AdammBalogh\Box\ContentClient;
@@ -99,10 +99,10 @@ class BoxAdapter extends AbstractAdapter
                 $json = json_decode($response->getBody());
                 return [
                     'type' => 'file',
-                    'modified' => strtotime($json->entries[0]->modified_at),
                     'path' => $path,
                     'contents' => $contents,
                     'size' => $json->entries[0]->size,
+                    'mimetype' => $this->getMimetype($path),
                 ];
             }
         }
@@ -127,25 +127,28 @@ class BoxAdapter extends AbstractAdapter
     {
         $path = $this->applyPathPrefix($path);
         $newpath = $this->applyPathPrefix($newpath);
+
         if ($oid = $this->idForFile($path)) {
+            $pathDirId = $this->idForFolder(dirname($path));
+
             if ($newId = $this->idForFolder(dirname($newpath))) {
                 $er = new ExtendedRequest();
-                $er->setPostBodyField('name', basename($path));
-                $er->setPostBodyField('id', $newId);
+
+                $er->setPostBodyField('name', basename($newpath));
+
+                if ($pathDirId !== $newId) {
+                    $er->setPostBodyField('parent', (object)['id' => $newId]);
+                }
 
                 $command = new Content\File\UpdateFileInfo($oid, $er);
                 $response = ResponseFactory::getResponse($this->client, $command);
 
                 if ($response instanceof SuccessResponse) {
-                    $json = json_decode($response->getBody());
-                    return [
-                        'type' => 'file',
-                        'modified' => strtotime($json->modified_at),
-                        'path' => $newpath,
-                    ];
+                    return true;
                 }
             }
         }
+
         return false;
     }
 
@@ -303,16 +306,27 @@ class BoxAdapter extends AbstractAdapter
     public function read($path)
     {
         $path = $this->applyPathPrefix($path);
-        if ($id = $this->idForPath($path)) {
-            $command = new Content\File\DownloadFile($id);
-            $response = ResponseFactory::getResponse($this->client, $command);
-
-            if ($response instanceof SuccessResponse) {
-                return $response->getBody();
+        if ($id = $this->idForFile($path)) {
+            try {
+                $command = new Content\File\DownloadFile($id);
+                $response = ResponseFactory::getResponse($this->client, $command);
+            }
+            // on success, box returns a "302 Found" header, but that trips
+            // up guzzle which expects to have some JSON to parse.
+            catch (\GuzzleHttp\Exception\ParseException $pe) {
+                $a = explode("\n", $pe->getResponse());
+                if (strpos($a[0], "302 Found")) {
+                    if ($l = $pe->getResponse()->getHeader('Location')) {
+                        return (new Client())->get($l)->getBody();
+                    }
+                }
             }
         }
+
         return false;
     }
+
+
 
     public function has($path)
     {
