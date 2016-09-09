@@ -9,12 +9,14 @@ use League\Flysystem\Util;
 
 use GuzzleHttp\Client;
 
+use AdammBalogh\Box\Client\Content\UploadClient;
+use AdammBalogh\Box\Client\Content\ApiClient;
 use AdammBalogh\Box\Command\Content;
 use AdammBalogh\Box\ContentClient;
-use AdammBalogh\Box\Request\ExtendedRequest;
-
 use AdammBalogh\Box\Factory\ResponseFactory;
 use AdammBalogh\Box\GuzzleHttp\Message\SuccessResponse;
+use AdammBalogh\Box\Request\ExtendedRequest;
+
 use League\Flysystem\Adapter\Polyfill\StreamedTrait;
 
 use Zburke\Flysystem\Box\CopyFile;
@@ -25,25 +27,23 @@ class BoxAdapter extends AbstractAdapter
     use StreamedTrait;
 
     /**
-     * @var Client
+     * @var ContentClient
      */
     protected $client;
 
     /**
-     *
+     * @var array hash mapping paths to their ids and types
      */
-    private $tree = [];
     private $paths = ['/' => ['id' => '0', 'type' => 'folder']];
 
     /**
-     * Constructor.
      *
-     * @param Client $client
+     * @param string $token a valid access token
      * @param string $prefix
      */
-    public function __construct(ContentClient $client, $prefix = null)
+    public function __construct($token, $prefix = null)
     {
-        $this->client = $client;
+        $this->client = new ContentClient(new ApiClient($token), new UploadClient($token));
         $this->setPathPrefix($prefix);
     }
 
