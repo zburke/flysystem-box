@@ -17,6 +17,8 @@ use AdammBalogh\Box\Factory\ResponseFactory;
 use AdammBalogh\Box\GuzzleHttp\Message\SuccessResponse;
 use League\Flysystem\Adapter\Polyfill\StreamedTrait;
 
+use Zburke\Flysystem\Box\CopyFile;
+
 class BoxAdapter extends AbstractAdapter
 {
     use NotSupportingVisibilityTrait;
@@ -71,6 +73,7 @@ class BoxAdapter extends AbstractAdapter
                     'path' => $path,
                     'contents' => $contents,
                     'size' => $json->entries[0]->size,
+                    'mimetype' => $this->getMimetype($path),
                 ];
             }
         }
@@ -90,8 +93,8 @@ class BoxAdapter extends AbstractAdapter
      */
     public function update($path, $contents, Config $config)
     {
-        $path = $this->applyPathPrefix($path);
-        if ($id = $this->idForFile($path)) {
+        $rPath = $this->applyPathPrefix($path);
+        if ($id = $this->idForFile($rPath)) {
             $command = new Content\File\UploadNewFileVersion($id, $contents);
             $response = ResponseFactory::getResponse($this->client, $command);
 
@@ -99,7 +102,7 @@ class BoxAdapter extends AbstractAdapter
                 $json = json_decode($response->getBody());
                 return [
                     'type' => 'file',
-                    'path' => $path,
+                    'path' => $rPath,
                     'contents' => $contents,
                     'size' => $json->entries[0]->size,
                     'mimetype' => $this->getMimetype($path),
@@ -109,8 +112,6 @@ class BoxAdapter extends AbstractAdapter
         else {
             return $this->write($path, $contents, $config);
         }
-
-        return false;
     }
 
 
@@ -133,7 +134,6 @@ class BoxAdapter extends AbstractAdapter
 
             if ($newId = $this->idForFolder(dirname($newpath))) {
                 $er = new ExtendedRequest();
-
                 $er->setPostBodyField('name', basename($newpath));
 
                 if ($pathDirId !== $newId) {
@@ -164,21 +164,23 @@ class BoxAdapter extends AbstractAdapter
     public function copy($path, $newpath)
     {
         $path = $this->applyPathPrefix($path);
-        $newpath = $this->applyPathPrefix($newpath);
 
-        if ($id = $this->idForPath($path)) {
-            if ($newId = $this->idForPath(dirname($newpath))) {
+        if ($id = $this->idForFile($path)) {
+            $newpath = $this->applyPathPrefix($newpath);
+
+            // newpath is the folder to copy into
+            if ($newId = $this->idForFolder($newpath)) {
                 $command = new Content\File\CopyFile($id, $newId);
-                $response = ResponseFactory::getResponse($this->client, $command);
+            }
+            // new path is the folder to copy into, and the new name
+            // for the file
+            elseif ($newId = $this->idForFolder(dirname($newpath))) {
+                $command = new CopyFile($id, $newId, basename($newpath));
+            }
 
-                if ($response instanceof SuccessResponse) {
-                    $json = json_decode($response->getBody());
-                    return [
-                        'type' => 'file',
-                        'modified' => strtotime($json->modified_at),
-                        'path' => $newpath,
-                    ];
-                }
+            $response = ResponseFactory::getResponse($this->client, $command);
+            if ($response instanceof SuccessResponse) {
+                return true;
             }
         }
 
@@ -201,10 +203,6 @@ class BoxAdapter extends AbstractAdapter
             try {
                 $command = new Content\File\DeleteFile($id);
                 $response = ResponseFactory::getResponse($this->client, $command);
-
-                if ($response instanceof SuccessResponse) {
-                    return true;
-                }
             }
             // on success, box returns a "204 No Conent" header, but that trips
             // up guzzle which expects to have some JSON to parse.
@@ -237,10 +235,6 @@ class BoxAdapter extends AbstractAdapter
                 $er->addQueryField('recursive', 'true');
                 $command = new Content\Folder\DeleteFolder($id, $er);
                 $response = ResponseFactory::getResponse($this->client, $command);
-
-                if ($response instanceof SuccessResponse) {
-                    return true;
-                }
             }
             // on success, box returns a "204 No Conent" header, but that trips
             // up guzzle which expects to have some JSON to parse.
@@ -270,19 +264,17 @@ class BoxAdapter extends AbstractAdapter
     {
         $dirname = $this->applyPathPrefix($dirname);
 
-        if ($id = $this->idForPath($dirname)) {
-            $command = new Content\Folder\CreateFolder('folderName', 'parentFolderId');
+        if ($id = $this->idForFolder(dirname($dirname))) {
+            $command = new Content\Folder\CreateFolder(basename($dirname), $id);
             $response = ResponseFactory::getResponse($this->client, $command);
 
             if ($response instanceof SuccessResponse) {
-                $json = json_decode($response->getBody());
-
-                return [
-                    'type' => 'folder',
-                    'modified' => strtotime($json->created_at),
-                    'path' => $dirname,
-                ];
+                return true;
             }
+        }
+        else {
+            $this->createDir(dirname($dirname), $config);
+            return $this->createDir($dirname, $config);
         }
 
         return false;
@@ -338,7 +330,7 @@ class BoxAdapter extends AbstractAdapter
     public function listContents($path = '', $recursive = false)
     {
         $path = $this->applyPathPrefix($path);
-        if ($id = $this->idForPath($path)) {
+        if ($id = $this->idForFolder($path)) {
             $command = new Content\Folder\ListFolder($id);
             $response = ResponseFactory::getResponse($this->client, $command);
 
