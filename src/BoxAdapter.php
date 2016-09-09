@@ -60,19 +60,22 @@ class BoxAdapter extends AbstractAdapter
      */
     public function write($path, $contents, Config $config)
     {
-        $path = $this->applyPathPrefix($path);
-        if ($parentFolderId = $this->idForFolder(dirname($path))) {
-            $command = new Content\File\UploadFile(basename($path), $parentFolderId, $contents);
+        $rPath = $this->applyPathPrefix($path);
+        if (! $this->has(dirname($path))) {
+            $this->createDir(dirname($path), new Config());
+        }
+
+        if ($parentFolderId = $this->idForFolder(dirname($rPath))) {
+            $command = new Content\File\UploadFile(basename($rPath), $parentFolderId, $contents);
             $response = ResponseFactory::getResponse($this->client, $command);
 
             if ($response instanceof SuccessResponse) {
                 $json = json_decode($response->getBody());
                 return [
-                    'type' => 'file',
-                    'modified' => strtotime($json->entries[0]->created_at),
-                    'path' => $path,
                     'contents' => $contents,
+                    'type' => 'file',
                     'size' => $json->entries[0]->size,
+                    'path' => $rPath,
                     'mimetype' => $this->getMimetype($path),
                 ];
             }
@@ -101,17 +104,16 @@ class BoxAdapter extends AbstractAdapter
             if ($response instanceof SuccessResponse) {
                 $json = json_decode($response->getBody());
                 return [
-                    'type' => 'file',
-                    'path' => $rPath,
                     'contents' => $contents,
+                    'path' => $rPath,
                     'size' => $json->entries[0]->size,
+                    'type' => 'file',
                     'mimetype' => $this->getMimetype($path),
                 ];
             }
         }
-        else {
-            return $this->write($path, $contents, $config);
-        }
+
+        return $this->write($path, $contents, $config);
     }
 
 
@@ -163,24 +165,26 @@ class BoxAdapter extends AbstractAdapter
      */
     public function copy($path, $newpath)
     {
+        $command = null;
         $path = $this->applyPathPrefix($path);
 
         if ($id = $this->idForFile($path)) {
             $newpath = $this->applyPathPrefix($newpath);
 
-            // newpath is the folder to copy into
+            // is newpath just the folder to copy into, or
+            // a full path including new filename?
             if ($newId = $this->idForFolder($newpath)) {
                 $command = new Content\File\CopyFile($id, $newId);
             }
-            // new path is the folder to copy into, and the new name
-            // for the file
             elseif ($newId = $this->idForFolder(dirname($newpath))) {
                 $command = new CopyFile($id, $newId, basename($newpath));
             }
 
-            $response = ResponseFactory::getResponse($this->client, $command);
-            if ($response instanceof SuccessResponse) {
-                return true;
+            if (null !== $command) {
+                $response = ResponseFactory::getResponse($this->client, $command);
+                if ($response instanceof SuccessResponse) {
+                    return true;
+                }
             }
         }
 
@@ -243,8 +247,6 @@ class BoxAdapter extends AbstractAdapter
                 if (strpos($a[0], "204 No Content")) {
                     return true;
                 }
-
-                print_r(implode("\n", $a));
             }
         }
 
@@ -262,38 +264,37 @@ class BoxAdapter extends AbstractAdapter
      */
     public function createDir($dirname, Config $config)
     {
+        $hasParent = false;
         $dirname = $this->applyPathPrefix($dirname);
 
-        if ($id = $this->idForFolder(dirname($dirname))) {
-            $command = new Content\Folder\CreateFolder(basename($dirname), $id);
-            $response = ResponseFactory::getResponse($this->client, $command);
+        // folder already exists
+        if (false !== $this->idForFolder($dirname)) {
+            return false;
+        }
 
-            if ($response instanceof SuccessResponse) {
-                return true;
+        $rPath = '';
+        foreach (explode($this->pathSeparator, $dirname) as $part) {
+            if (! $part) {
+                continue;
+            }
+
+            $rPath = "{$rPath}{$this->pathSeparator}{$part}";
+
+            if (false === ($id = $this->idForFolder($rPath))) {
+                if ($pid = $this->idForFolder(dirname($rPath))) {
+                    $command = new Content\Folder\CreateFolder($part, $pid);
+                    $response = ResponseFactory::getResponse($this->client, $command);
+
+                    if (! $response instanceof SuccessResponse) {
+                        return false;
+                    }
+                }
             }
         }
-        else {
-            $this->createDir(dirname($dirname), $config);
-            return $this->createDir($dirname, $config);
-        }
 
-        return false;
+        return true;
     }
 
-
-    /**
-     * Set the visibility for a file.
-     *
-     * @param string $path
-     * @param string $visibility
-     *
-     * @return array|false file meta data
-     */
-    public function setVisibility($path, $visibility)
-    {
-
-        return false;
-    }
 
     public function read($path)
     {
@@ -366,12 +367,9 @@ class BoxAdapter extends AbstractAdapter
                 $info = json_decode($response->getBody());
                 return [
                     'basename' => basename($path),
-                    //@@
-                    'type' => $info->type,
                     'path' => $path,
-                    //@@
-                    'visibility' => 'public',
                     'size' => $info->size,
+                    'type' => $info->type,
                     'timestamp' => strtotime($info->modified_at),
                 ];
             }
@@ -384,11 +382,8 @@ class BoxAdapter extends AbstractAdapter
                 $info = json_decode($response->getBody());
                 return [
                     'basename' => basename($path),
-                    //@@
-                    'type' => $info->type,
                     'path' => $path,
-                    //@@
-                    'visibility' => 'public',
+                    'type' => $info->type,
                     'timestamp' => strtotime($info->modified_at),
                 ];
             }
@@ -410,7 +405,11 @@ class BoxAdapter extends AbstractAdapter
 
     public function getMimetype($path)
     {
-        return Util\MimeType::detectByFilename($path);
+        if ($this->has($path)) {
+            return Util\MimeType::detectByFilename($path);
+        }
+
+        return false;
     }
 
 
@@ -432,6 +431,9 @@ class BoxAdapter extends AbstractAdapter
 
     private function idForFolder($path)
     {
+        if ($path !== $this->pathSeparator) {
+            $path = rtrim($path, $this->pathSeparator);
+        }
         return $this->idForPath($path, 'folder');
     }
 
@@ -444,18 +446,12 @@ class BoxAdapter extends AbstractAdapter
     {
         // dirname returns "." for an empty path, but we'll use applyPathPrefix
         // to handle relative paths so we just want an empty path.
-        if ('.' === $path) {
-            $path = '';
+        if ('.' === $path || '' === $path) {
+            $path = $this->pathPrefix;
         }
-
-//        $path = $this->applyPathPrefix($path);
 
         if (isset($this->paths[$path]) && $this->paths[$path]['type'] === $type) {
             return $this->paths[$path]['id'];
-        }
-
-        if (! count($this->paths)) {
-            $this->setPathsForId(0, '');
         }
 
         $rPath = '';
