@@ -303,9 +303,19 @@ class BoxAdapter extends AbstractAdapter
             try {
                 $command = new Content\File\DownloadFile($id);
                 $response = ResponseFactory::getResponse($this->client, $command);
+
+                // On success, box returns a "302 Found" header and an empty body,
+                // which trips up some versions of Guzzle that really REALLY want
+                // a response body to parse into JSON. Here we handle both conditions
+                // by looking for a SuccessResponse or looking for the 302 header
+                // in the raw response.
+                if ($response instanceof SuccessResponse) {
+                    $headers = $response->getHeaders();
+                    if (isset($headers['Location'])) {
+                        return (new Client())->get($headers['Location'][0])->getBody();
+                    }
+                }
             }
-            // on success, box returns a "302 Found" header, but that trips
-            // up guzzle which expects to have some JSON to parse.
             catch (\GuzzleHttp\Exception\ParseException $pe) {
                 $a = explode("\n", $pe->getResponse());
                 if (strpos($a[0], "302 Found")) {
