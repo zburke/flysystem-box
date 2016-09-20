@@ -341,7 +341,7 @@ class BoxAdapter extends AbstractAdapter
     public function listContents($path = '', $recursive = false)
     {
         $path = $this->applyPathPrefix($path);
-        if ($id = $this->idForFolder($path)) {
+        if (FALSE !== ($id = $this->idForFolder($path))) {
             $command = new Content\Folder\ListFolder($id);
             $response = ResponseFactory::getResponse($this->client, $command);
 
