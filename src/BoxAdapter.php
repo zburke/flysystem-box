@@ -296,6 +296,14 @@ class BoxAdapter extends AbstractAdapter
     }
 
 
+
+    /**
+     * Read a file.
+     *
+     * @param string $path
+     *
+     * @return array|false
+     */
     public function read($path)
     {
         $path = $this->applyPathPrefix($path);
@@ -312,7 +320,8 @@ class BoxAdapter extends AbstractAdapter
                 if ($response instanceof SuccessResponse) {
                     $headers = $response->getHeaders();
                     if (isset($headers['Location'])) {
-                        return (new Client())->get($headers['Location'][0])->getBody();
+                        $object['contents'] = (new Client())->get($headers['Location'][0])->getBody();
+                        return $object;
                     }
                 }
             }
@@ -320,7 +329,8 @@ class BoxAdapter extends AbstractAdapter
                 $a = explode("\n", $pe->getResponse());
                 if (strpos($a[0], "302 Found")) {
                     if ($l = $pe->getResponse()->getHeader('Location')) {
-                        return (new Client())->get($l)->getBody();
+                        $object['contents'] = (new Client())->get($l)->getBody();
+                        return $object;
                     }
                 }
             }
@@ -331,6 +341,13 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * Check whether a file exists.
+     *
+     * @param string $path
+     *
+     * @return array|bool|null
+     */
     public function has($path)
     {
         return !! $this->getMetadata($path);
@@ -338,6 +355,14 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * List contents of a directory.
+     *
+     * @param string $directory
+     * @param bool   $recursive
+     *
+     * @return array
+     */
     public function listContents($path = '', $recursive = false)
     {
         $path = $this->applyPathPrefix($path);
@@ -366,6 +391,13 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * Get all the meta data of a file or directory.
+     *
+     * @param string $path
+     *
+     * @return array|false
+     */
     public function getMetadata($path)
     {
         $path = $this->applyPathPrefix($path);
@@ -402,6 +434,16 @@ class BoxAdapter extends AbstractAdapter
         return false;
     }
 
+
+
+    /**
+     * Get all the meta data of a file or directory.
+     *
+     * @param string $path
+     *
+     * @return array|false
+     */
+    //**
     public function getSize($path)
     {
         if ($info = $this->getMetadata($path)) {
@@ -413,20 +455,34 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * Get the mimetype of a file.
+     *
+     * @param string $path
+     *
+     * @return array|false
+     */
     public function getMimetype($path)
     {
-        if ($this->has($path)) {
-            return Util\MimeType::detectByFilename($path);
+        if ($info = $this->getMetadata($path)) {
+            return $info;
         }
 
         return false;
     }
 
 
+    /**
+     * Get the timestamp of a file.
+     *
+     * @param string $path
+     *
+     * @return array|false
+     */
     public function getTimestamp($path)
     {
         if ($info = $this->getMetadata($path)) {
-            return $info['timestamp'];
+            return $info;
         }
 
         return false;
@@ -434,11 +490,21 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * Return the ID for the given file, or FALSE.
+     * @param string $path
+     */
     private function idForFile($path)
     {
         return $this->idForPath($path, 'file');
     }
 
+
+
+    /**
+     * Return the ID for the given directory, or FALSE.
+     * @param string $path
+     */
     private function idForFolder($path)
     {
         if ($path !== $this->pathSeparator) {
@@ -448,9 +514,14 @@ class BoxAdapter extends AbstractAdapter
     }
 
 
+
     /**
      * Return the ID for the given path, or FALSE.
+     *
      * @param string $path
+     * @param string type 'folder' or 'file'; defaults to folder
+     *
+     * @return the ID corresponding to the given path, or false
      */
     private function idForPath($path, $type = 'folder')
     {
@@ -488,6 +559,15 @@ class BoxAdapter extends AbstractAdapter
 
 
 
+    /**
+     * given the id for a folder, read its contents and cache the full path,
+     * including the id and type (folder or file) for faster lookup.
+     *
+     * @param int id id of a folder to read
+     * @param string path filepath including the folder to be read
+     *
+     * @return true if the folder was successfully read; false otherwise.
+     */
     private function setPathsForId($id, $path = '')
     {
         $command = new Content\Folder\ListFolder($id);
@@ -506,4 +586,28 @@ class BoxAdapter extends AbstractAdapter
 
         return false;
     }
+
+
+
+    /**
+     * Normalize a Box response.
+     *
+     * @param array $response
+     *
+     * @return array
+     */
+    protected function normalizeResponse(array $response)
+    {
+        $result = ['path' => ltrim($this->removePathPrefix($response['path']), '/')];
+
+        if (isset($response['modified'])) {
+            $result['timestamp'] = strtotime($response['modified']);
+        }
+
+        $result = array_merge($result, Util::map($response, static::$resultMap));
+        $result['type'] = $response['is_dir'] ? 'dir' : 'file';
+
+        return $result;
+    }
+
 }
